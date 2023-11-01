@@ -62,7 +62,7 @@ public class TestConcurrentNeighborSet extends RandomizedTest {
     // only nodes 6 and 8 are diverse wrt 7
     var neighbors = new ConcurrentNeighborSet(7, 3, scoreBetween);
     var empty = new NeighborArray(0);
-    neighbors.insertDiverse(candidates, empty);
+    neighbors.insertDiverse(candidates, empty, 0);
     assertEquals(2, neighbors.size());
     assert neighbors.contains(8);
     assert neighbors.contains(6);
@@ -94,7 +94,7 @@ public class TestConcurrentNeighborSet extends RandomizedTest {
 
     // only nodes 6 and 8 are diverse wrt 7
     var neighbors = new ConcurrentNeighborSet(7, 3, scoreBetween);
-    neighbors.insertDiverse(natural, concurrent);
+    neighbors.insertDiverse(natural, concurrent, 0);
     assertEquals(2, neighbors.size());
     assert neighbors.contains(8);
     assert neighbors.contains(6);
@@ -119,7 +119,7 @@ public class TestConcurrentNeighborSet extends RandomizedTest {
     cna2.addInOrder(8, scoreBetween.score(7, 6));
 
     var neighbors = new ConcurrentNeighborSet(7, 3, scoreBetween, 1.0f, cna);
-    neighbors.insertDiverse(cna2, NeighborArray.EMPTY);
+    neighbors.insertDiverse(cna2, NeighborArray.EMPTY, 0);
     assertEquals(2, neighbors.size());
   }
 

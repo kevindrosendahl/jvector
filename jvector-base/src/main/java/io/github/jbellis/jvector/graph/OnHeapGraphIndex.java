@@ -25,6 +25,7 @@
 package io.github.jbellis.jvector.graph;
 
 import io.github.jbellis.jvector.util.Accountable;
+import io.github.jbellis.jvector.util.BuildLogger;
 import io.github.jbellis.jvector.util.DenseIntMap;
 import io.github.jbellis.jvector.util.BitSet;
 import io.github.jbellis.jvector.util.Bits;
@@ -97,6 +98,7 @@ public class OnHeapGraphIndex<T> implements GraphIndex<T>, Accountable {
     var newNeighborSet = neighborFactory.apply(node, maxDegree());
     nodes.put(node, newNeighborSet);
     maxNodeId.accumulateAndGet(node, Math::max);
+    BuildLogger.logAddNode(node);
     return newNeighborSet;
   }
 

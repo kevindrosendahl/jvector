@@ -18,17 +18,25 @@ package io.github.jbellis.jvector.graph;
 
 import io.github.jbellis.jvector.util.BitSet;
 import io.github.jbellis.jvector.util.Bits;
+import io.github.jbellis.jvector.util.BuildLogger;
 import io.github.jbellis.jvector.util.DocIdSetIterator;
 import io.github.jbellis.jvector.util.FixedBitSet;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
-/** A concurrent set of neighbors that encapsulates diversity/pruning mechanics. */
+/**
+ * A concurrent set of neighbors that encapsulates diversity/pruning mechanics.
+ */
 public class ConcurrentNeighborSet {
-  /** the node id whose neighbors we are storing */
+
+  /**
+   * the node id whose neighbors we are storing
+   */
   private final int nodeId;
 
   /**
@@ -44,26 +52,30 @@ public class ConcurrentNeighborSet {
 
   private final NeighborSimilarity similarity;
 
-  /** the maximum number of neighbors we can store */
+  /**
+   * the maximum number of neighbors we can store
+   */
   private final int maxConnections;
 
-  /** the proportion of edges that are diverse at alpha=1.0.  updated by removeAllNonDiverse */
+  /**
+   * the proportion of edges that are diverse at alpha=1.0.  updated by removeAllNonDiverse
+   */
   private float shortEdges = Float.NaN;
 
   public ConcurrentNeighborSet(int nodeId, int maxConnections, NeighborSimilarity similarity) {
     this(nodeId, maxConnections, similarity, 1.0f);
   }
 
-  public ConcurrentNeighborSet(int nodeId, int maxConnections, NeighborSimilarity similarity, float alpha) {
+  public ConcurrentNeighborSet(int nodeId, int maxConnections, NeighborSimilarity similarity,
+      float alpha) {
     this(nodeId, maxConnections, similarity, alpha, new NeighborArray(maxConnections));
   }
 
   ConcurrentNeighborSet(int nodeId,
-                        int maxConnections,
-                        NeighborSimilarity similarity,
-                        float alpha,
-                        NeighborArray neighbors)
-  {
+      int maxConnections,
+      NeighborSimilarity similarity,
+      float alpha,
+      NeighborArray neighbors) {
     this.nodeId = nodeId;
     this.maxConnections = maxConnections;
     this.similarity = similarity;
@@ -78,9 +90,9 @@ public class ConcurrentNeighborSet {
     this.alpha = old.alpha;
     neighborsRef = new AtomicReference<>(old.neighborsRef.get());
   }
-  
+
   public float getShortEdges() {
-      return shortEdges;
+    return shortEdges;
   }
 
   public NodesIterator iterator() {
@@ -88,23 +100,25 @@ public class ConcurrentNeighborSet {
   }
 
   /**
-   * For every neighbor X that this node Y connects to, add a reciprocal link from X to Y.
-   * If overflow is > 1.0, allow the number of neighbors to exceed maxConnections temporarily.
+   * For every neighbor X that this node Y connects to, add a reciprocal link from X to Y. If
+   * overflow is > 1.0, allow the number of neighbors to exceed maxConnections temporarily.
    */
   public void backlink(Function<Integer, ConcurrentNeighborSet> neighborhoodOf, float overflow) {
     NeighborArray neighbors = neighborsRef.get();
     for (int i = 0; i < neighbors.size(); i++) {
       int nbr = neighbors.node[i];
       float nbrScore = neighbors.score[i];
+//      BuildLogger.logBacklinked(nbr);
       ConcurrentNeighborSet nbrNbr = neighborhoodOf.apply(nbr);
+      BuildLogger.logLink(nbr, nodeId, nbrScore);
       nbrNbr.insert(nodeId, nbrScore, overflow);
     }
   }
 
   /**
-   * Enforce maxConnections as a hard cap, since we allow it to be exceeded temporarily during construction
-   * for efficiency.  This method is threadsafe, but if you call it concurrently with other inserts,
-   * the limit may end up being exceeded again.
+   * Enforce maxConnections as a hard cap, since we allow it to be exceeded temporarily during
+   * construction for efficiency.  This method is threadsafe, but if you call it concurrently with
+   * other inserts, the limit may end up being exceeded again.
    */
   public void cleanup() {
     neighborsRef.getAndUpdate(this::removeAllNonDiverse);
@@ -140,6 +154,7 @@ public class ConcurrentNeighborSet {
   }
 
   private static class NeighborIterator extends NodesIterator {
+
     private final NeighborArray neighbors;
     private int i;
 
@@ -174,7 +189,7 @@ public class ConcurrentNeighborSet {
    * were selected by this method, or were added as a "backlink" to a node inserted concurrently
    * that chose this one as a neighbor.
    */
-  public void insertDiverse(NeighborArray natural, NeighborArray concurrent) {
+  public void insertDiverse(NeighborArray natural, NeighborArray concurrent, int node) {
     if (natural.size() == 0 && concurrent.size() == 0) {
       return;
     }
@@ -197,9 +212,44 @@ public class ConcurrentNeighborSet {
       // pruning back extras is expensive.
       var merged = mergeNeighbors(current, toMerge);
       BitSet selected = selectDiverse(merged);
+
+
+      var selectedDiverse = new ArrayList<Integer>();
+      var selectedCandidates = new ArrayList<Candidate>();
+      for (int i = selected.nextSetBit(0);
+          i != DocIdSetIterator.NO_MORE_DOCS;
+          i = selected.nextSetBit(i + 1)) {
+        var selectedNode = merged.node[i];
+        selectedDiverse.add(selectedNode);
+        selectedCandidates.add(new Candidate(selectedNode, merged.score[i]));
+
+        if (i + 1 >= selected.length()) {
+          break;
+        }
+      }
+      BuildLogger.logSelectedDiverse(selectedDiverse);
+
+      selectedCandidates.sort(Comparator.reverseOrder());
+      for (var candidate : selectedCandidates) {
+        BuildLogger.logLink(node, candidate.node, candidate.score);
+      }
+
       merged.retain(selected);
       return merged;
     });
+  }
+
+  public record Candidate(int node, float score) implements Comparable<Candidate> {
+
+    @Override
+    public int compareTo(Candidate o) {
+      var score = Float.compare(this.score, o.score);
+      if (score != 0) {
+        return score;
+      }
+
+      return Integer.compare(this.node, o.node);
+    }
   }
 
   void padWithRandom(NeighborArray connections) {
@@ -213,9 +263,12 @@ public class ConcurrentNeighborSet {
    * Copies the selected neighbors from the merged array into a new array.
    */
   private NeighborArray copyDiverse(NeighborArray merged, BitSet selected) {
+    var pruned = new ArrayList<Integer>();
     NeighborArray next = new NeighborArray(maxConnections);
     for (int i = 0; i < merged.size(); i++) {
       if (!selected.get(i)) {
+        pruned.add(merged.node[i]);
+//        BuildLogger.logPruned(merged.node[i]);
         continue;
       }
       int node = merged.node()[i];
@@ -223,6 +276,12 @@ public class ConcurrentNeighborSet {
       float score = merged.score()[i];
       next.addInOrder(node, score);
     }
+
+    pruned.sort(Comparator.naturalOrder());
+    for (var pnode : pruned) {
+      BuildLogger.logPruned(pnode);
+    }
+
     assert next.size <= maxConnections;
     return next;
   }
@@ -246,7 +305,7 @@ public class ConcurrentNeighborSet {
           nSelected++;
         }
       }
-      
+
       if (a == 1.0f) {
         // this isn't threadsafe, but (for now) we only care about the result after calling cleanup(),
         // when we don't have to worry about concurrent changes
@@ -372,12 +431,19 @@ public class ConcurrentNeighborSet {
     }
 
     var scoreProvider = similarity.scoreProvider(node);
-    for (int i = selected.nextSetBit(0); i != DocIdSetIterator.NO_MORE_DOCS; i = selected.nextSetBit(i + 1)) {
+    for (int i = selected.nextSetBit(0); i != DocIdSetIterator.NO_MORE_DOCS;
+        i = selected.nextSetBit(i + 1)) {
       int otherNode = others.node()[i];
       if (node == otherNode) {
         break;
       }
-      if (scoreProvider.similarityTo(otherNode) > score * alpha) {
+
+      if (node == 0 && otherNode == 2) {
+        BuildLogger.nothing();
+      }
+
+      var neighborSimilarity = scoreProvider.similarityTo(otherNode);
+      if (neighborSimilarity > score * alpha) {
         return false;
       }
 
@@ -401,7 +467,9 @@ public class ConcurrentNeighborSet {
     return new ConcurrentNeighborSet(this);
   }
 
-  /** Only for testing; this is a linear search */
+  /**
+   * Only for testing; this is a linear search
+   */
   boolean contains(int i) {
     var it = this.iterator();
     while (it.hasNext()) {
